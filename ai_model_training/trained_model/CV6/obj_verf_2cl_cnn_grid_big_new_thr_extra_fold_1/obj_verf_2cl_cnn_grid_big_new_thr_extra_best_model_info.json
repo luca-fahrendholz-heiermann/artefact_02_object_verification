@@ -1,0 +1,8 @@
+{
+  "epoch": 474,
+  "val_macro_f1_t": 0.8793104662635349,
+  "val_t_star": 0.787070707070707,
+  "val_fpr0_t": 0.022588827476577974,
+  "objective": "f1_class1",
+  "model_save_path": "C:\\Users\\Lukas\\Desktop\\ki_luca\\3D-Verification\\KI_Training_3_channels\\trained_model\\obj_verf_2cl_cnn_grid_big_new_thr_extra_fold_1\\obj_verf_2cl_cnn_grid_big_new_thr_extra_best_model.pth"
+}
