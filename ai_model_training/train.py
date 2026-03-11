@@ -187,7 +187,7 @@ def main():
         base_model = MLPFlex(p=setup["dropout_rate"], out_dim=setup["output_size"],
                              use_main=True,
                              use_esf_norm=True,
-                             use_grid=False)
+                             use_grid=True)
 
         #model = MLP704v2(p =setup["dropout_rate"], out_dim =setup["output_size"])
         #model = ESFResNetCNN_withVector_Att(num_classes=setup["output_size"], extra_dim=44)
@@ -225,4 +225,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
