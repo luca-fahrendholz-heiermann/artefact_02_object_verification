@@ -113,7 +113,7 @@ def calculate_mean_radius(pcd, k = 10):
     nn.fit(np.array(pcd.points))
 
     # Berechnen der Entfernungen und Indizes der k-nächsten Nachbarn für jeden Punkt
-    distances, indices = nn.kneighbors(np.array(pcd.points))
+    distances, _ = nn.kneighbors(np.array(pcd.points))
 
     # Berechnung des durchschnittlichen Abstands für jeden Punkt
     mean_distances = np.mean(distances, axis=1)
@@ -123,7 +123,7 @@ def calculate_mean_radius(pcd, k = 10):
 
     # Ausgabe des Gesamtdurchschnitts
     #print("Overall mean distance:", overall_mean_distance)
-    return overall_mean_distance, distances
+    return overall_mean_distance
 
 
 def normalize_to_minus_one_and_one_v2(descriptor):
