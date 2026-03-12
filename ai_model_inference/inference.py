@@ -1,6 +1,7 @@
 import argparse
 import copy
 import json
+import logging
 import os
 import sys
 from typing import Dict, Tuple
@@ -197,11 +198,11 @@ def run_inference(model: torch.nn.Module, x704: np.ndarray, xext: np.ndarray, de
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Inference for MLPFlex + ChannelMaskWrapper(FeatMode.ALL)")
-    parser.add_argument("--model-target", required=True, help="Path to model target point cloud")
-    parser.add_argument("--scan-source", required=True, help="Path to scan source point cloud")
-    parser.add_argument("--checkpoint", default=os.path.join(HERE, "checkpoint", "obj_verf_3classes_tanh_ep_300_lr_0_001_6_layer_fold_4_best_model.pth"), help="Path to trained checkpoint")
-    parser.add_argument("--esf-exe", default=os.path.join(HERE, "esf_estimation.exe"), help="Path to esf_estimation executable")
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="Inference device")
+    parser.add_argument("--model-target", help="Path to model target point cloud")
+    parser.add_argument("--scan-source", help="Path to scan source point cloud")
+    parser.add_argument("--checkpoint", help="Path to trained checkpoint")
+    parser.add_argument("--esf-exe", help="Path to esf_estimation executable")
+    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Inference device (default: auto)")
     parser.add_argument("--print-vectors", action="store_true", help="Print vector dimensions and first values")
     parser.add_argument(
         "--legacy-normalize-main-diff",
@@ -211,17 +212,77 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-    device = "cuda" if args.device == "cuda" and torch.cuda.is_available() else "cpu"
+def _configure_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-    target = read_pcd_in_any_format(args.model_target)
-    source = read_pcd_in_any_format(args.scan_source)
+
+def _resolve_device(device_arg: str) -> str:
+    if device_arg == "cpu":
+        return "cpu"
+    if device_arg == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("--device cuda requested, but CUDA is not available")
+        return "cuda"
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _resolve_default_file(explicit_path: str, relative_dir: str, role: str, supported_exts) -> str:
+    if explicit_path:
+        return explicit_path
+
+    search_dir = os.path.join(HERE, relative_dir)
+    if not os.path.isdir(search_dir):
+        raise FileNotFoundError(
+            f"No --{role} provided and default directory does not exist: {search_dir}"
+        )
+
+    candidates = [
+        entry
+        for entry in os.listdir(search_dir)
+        if os.path.isfile(os.path.join(search_dir, entry))
+        and os.path.splitext(entry)[1].lower() in supported_exts
+    ]
+
+    if not candidates:
+        raise FileNotFoundError(
+            f"No --{role} provided and no supported files found in: {search_dir}"
+        )
+
+    selected = os.path.join(search_dir, candidates[0])
+    logging.info("Auto-selected --%s: %s", role, selected)
+    return selected
+
+
+def main() -> None:
+    _configure_logging()
+    args = parse_args()
+    device = _resolve_device(args.device)
+
+    point_cloud_exts = {".ply", ".pcd", ".xyz", ".xyzn", ".xyzrgb", ".obj", ".stl", ".off", ".gltf", ".glb", ".las", ".txt", ".asc", ".csv"}
+    checkpoint_exts = {".pth", ".pt", ".ckpt", ".bin"}
+    esf_exe_exts = {".exe"}
+
+    model_target_path = _resolve_default_file(args.model_target, os.path.join("input", "model"), "model-target", point_cloud_exts)
+    scan_source_path = _resolve_default_file(args.scan_source, os.path.join("input", "scan"), "scan-source", point_cloud_exts)
+    checkpoint_path = _resolve_default_file(args.checkpoint, "checkpoint", "checkpoint", checkpoint_exts)
+    esf_exe_path = _resolve_default_file(args.esf_exe, ".", "esf-exe", esf_exe_exts)
+
+    logging.info("Inference input | model-target=%s", model_target_path)
+    logging.info("Inference input | scan-source=%s", scan_source_path)
+    logging.info("Inference input | checkpoint=%s", checkpoint_path)
+    logging.info("Inference input | esf-exe=%s", esf_exe_path)
+    logging.info("Inference input | device-request=%s", args.device)
+    logging.info("Inference input | device-selected=%s", device)
+    logging.info("Inference input | print-vectors=%s", args.print_vectors)
+    logging.info("Inference input | legacy-normalize-main-diff=%s", args.legacy_normalize_main_diff)
+
+    target = read_pcd_in_any_format(model_target_path)
+    source = read_pcd_in_any_format(scan_source_path)
 
     feats = build_input_vectors(
         target,
         source,
-        args.esf_exe,
+        esf_exe_path,
         legacy_normalize_main_diff=args.legacy_normalize_main_diff,
     )
     if args.print_vectors:
@@ -229,7 +290,7 @@ def main() -> None:
         print("x704[:8] =", np.round(feats["x704"][:8], 6).tolist())
         print("xext[:8] =", np.round(feats["xext"][:8], 6).tolist())
 
-    model = load_inference_model(args.checkpoint, device=device)
+    model = load_inference_model(checkpoint_path, device=device)
     pred = run_inference(model, feats["x704"], feats["xext"], device=device)
 
     print(json.dumps(pred, indent=2))
