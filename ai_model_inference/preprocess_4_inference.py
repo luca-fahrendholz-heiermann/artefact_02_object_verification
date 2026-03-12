@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from scipy.spatial.distance import cosine
 from scipy.stats import wasserstein_distance
 import threading
+import subprocess
 ##################################ESF DIFF DESCRIPTOR###################################
 # functions for generating normal hist features:
 def compute_esf_descriptor(pcd_o3d=None, points = None, exe_path = os.path.join(os.getcwd(), "esf_estimation.exe"), use_normals = False):
