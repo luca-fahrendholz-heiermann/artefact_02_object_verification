@@ -12,7 +12,6 @@ import copy
 from matplotlib import pyplot as plt
 from sklearn.neighbors import KDTree
 from sklearn.neighbors import NearestNeighbors
-import point_cloud_descriptors as pc_desc
 from scipy.spatial.distance import cosine
 from scipy.stats import wasserstein_distance
 import threading
@@ -58,349 +57,6 @@ dir_data_3d_verification_input_data_planned_elements = os.path.join(dir_data_3d_
 dir_data_3d_verification_input_data_scan= os.path.join(dir_data_3d_verification_input_data, "scan")
 dir_data_3d_verification_output_dataset = os.path.join(dir_data_3d_verification, "output_dataset")
 dir_data_3d_verification_temp = os.path.join(dir_data_3d_verification, "temp")
-
-dir_pointnet2        = os.path.join(dir_scripts, "pointnet_2_torch")
-dir_pointnet2_models        = os.path.join(dir_pointnet2, "models")
-sys.path.append(dir_pointnet2)
-sys.path.append(dir_pointnet2_models)
-import pointnet2_sem_seg
-
-
-########################################### Use AI
-def get_dic_key_paths_legend_hdf5(path_hdf5file):
-   dic_legend = {}
-   dic_data        = {}
-   legend_list = []
-   hdf5 = h5py.File(path_hdf5file, mode = "r")
-
-   for key1 in hdf5.keys():  # BuildingElements #LabelLegend
-      if key1 == "LabelLegend":
-         dic_label_classes = {}
-         for key2 in hdf5[key1].keys():  # BuildingElementClasses
-            dic_legend_arrays = {}
-            legend_key = "/LabelLegend/" + key2
-            label_number_key = legend_key + "/label_number" #
-            rgb_color_key = legend_key + "/rgb_color" #
-            dic_legend_arrays["label_number"] = label_number_key
-            dic_legend_arrays["rgb_color"] = rgb_color_key
-            dic_legend[key2] = dic_legend_arrays
-   return dic_legend
-
-def get_array_from_hdf5(path_hdf5file, keypath):
-   # load file
-   hdf5 = h5py.File(path_hdf5file, mode = "r")
-   # Obtain the dataset of references
-   data_array_void = np.asarray(hdf5[keypath]).tolist()
-   #print("Raw: " , data_array_void)
-   data_array = []
-   type_int = 1
-   type_ndarray = type(np.array([]))
-   type_float = 0.1
-   type_tuple = ()
-
-   # direkt ein Wert hinterlegt
-   if type(data_array_void) == (type(type_int) or type(type_float)):
-      return data_array_void
-   # liste oder tuple hinterlegt
-   else:
-      for data_void in data_array_void:
-         temp_list = []
-         # ARRAY ERKENNUNG
-         if (type(data_void) == type(type_int)) or (type(data_void) ==type(type_float)):
-            return np.array(data_array_void)
-         # TUPLE ERKENNUNG
-         elif type(data_void) == type(type_tuple):
-            temp_list = np.array(list(data_void))
-            data_array.append(temp_list)
-         else:
-            print(type(data_void))
-      data_array = np.array(data_array)
-      return data_array
-
-def get_legend_data_from_hdf5(path_hdf5file):
-   dic_keys = get_dic_key_paths_legend_hdf5(path_hdf5file)
-   #print(dic_keys)
-   classes = list(dic_keys.keys())
-   #print("CLASSES ",classes)
-   legend_list = []
-   for key in classes:
-      keypath = dic_keys[key]
-      merge_list = []
-      label_class       =  key
-      label_number_path =  keypath["label_number"]
-      rgb_color_path    =  keypath["rgb_color"]
-      #print(label_number_path)
-      #print(rgb_color_path)
-      label_number      = get_array_from_hdf5(path_hdf5file, label_number_path)
-      rgb_color         = get_array_from_hdf5(path_hdf5file, rgb_color_path)
-      merge_list = np.array([label_class, label_number, rgb_color])
-      legend_list.append((merge_list))
-   return np.array(legend_list)
-
-class AsBuiltDataset(Dataset):
-   def __init__(self, data,  num_point=4096, batch_pts = 4096, num_features = 9):
-      super().__init__()
-      self.num_point = num_point
-      # divide into batches
-      # divide all data into batches with specific num of point in each batch
-      data_all = []
-      label_all = []
-      data_batched = []
-      labels_batched = []
-      with_rest_points = True
-
-      data_all = data
-
-      print("amount data: ", data_all.shape)
-      num_pts = data_all.shape[0]
-      num_features = data_all.shape[1]
-
-      print("num points: ", num_pts)
-      print("num features: ", num_features)
-
-      if num_pts % batch_pts == 0:
-         batches = int(num_pts / batch_pts)
-         data_batched = data_all.reshape((batches, batch_pts, num_features))
-      else:
-         batches = int(num_pts / batch_pts)
-         if batches == 0:
-            data_batched = data_all.reshape((1, num_pts, num_features))
-         else:
-            for batch in range(batches):
-               start = batch * batch_pts
-               end = start + batch_pts
-               data_temp = data_all[start:end]
-               data_temp.reshape(batch_pts, num_features)
-               data_batched.append(data_temp)
-            # rest
-            if with_rest_points == True:
-                rest_pts = num_pts % batch_pts
-                print(f"Rest points: {rest_pts}")
-                if rest_pts > 0:
-                    data_temp = data_all[-rest_pts:]  # Letzte Punkte als Rest
-                    # Null-Padding hinzufügen
-                    padding = np.zeros((batch_pts - rest_pts, num_features))
-                    data_temp = np.vstack((data_temp, padding))  # Restpunkte + Padding
-                    data_batched.append(data_temp)
-
-      self.data = np.array(data_batched)
-      print("Data shape: ", self.data.shape)
-
-   def __getitem__(self, idx):
-      current_points = self.data[idx]  # N * 6
-      return current_points
-
-   def __len__(self):
-      return len(self.data)
-
-def calculate_radius(point_cloud, k_neighbors=10):
-    """
-    Calculate the radius for calculating omnivariance values using k-nearest neighbors method.
-
-    Parameters:
-        point_cloud (numpy.ndarray): Nx3 array representing the point cloud where each row
-                                    contains the (x, y, z) coordinates of a point.
-        k_neighbors (int): The number of nearest neighbors to consider for radius estimation.
-
-    Returns:
-        float: The estimated radius for calculating omnivariance values.
-    """
-    # Use k-nearest neighbors to find the distances to the k-th nearest neighbor
-    nbrs = NearestNeighbors(n_neighbors=k_neighbors, algorithm='ball_tree').fit(point_cloud)
-    distances, _ = nbrs.kneighbors(point_cloud)
-
-    # Calculate the average distance to the k-nearest neighbors
-    avg_distance = np.mean(distances[:, -1])
-
-    return avg_distance
-def pcd_to_datastructure_4_pointnet2(pcd_scan, pcd_model):
-    # Save as hdf5 file - generate dataset to segment
-    points = np.array(pcd_scan.points)
-
-    if pcd_scan.has_normals == False:
-        radius = calculate_radius(points, 20)
-        pcd_scan.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=30))
-
-
-    normals = np.array(pcd_scan.normals)
-    data = np.concatenate((points, normals), axis=1)
-
-
-    print(data.shape)
-    num_features = data.shape[1]
-    num_pts = points.shape[0]
-    # source
-    coord_min_as_built, coord_max_as_built = np.amin(points, axis=0)[:3], np.amax(points, axis=0)[:3]
-
-    coord_min_max_as_built = np.concatenate((np.abs(coord_max_as_built), np.abs(coord_min_as_built)), axis=0).reshape((2, 3))
-
-    coord_max_as_built = np.max(coord_min_max_as_built, axis=0)
-
-    # target
-    points_as_planned = np.array(pcd_model.points)
-    coord_min_as_planned, coord_max_as_planned = np.amin(points_as_planned, axis=0)[:3], np.amax(points_as_planned,
-                                                                                                 axis=0)[:3]
-    coord_min_max_as_planned = np.concatenate((np.abs(coord_max_as_planned), np.abs(coord_min_as_planned)),
-                                              axis=0).reshape((2, 3))
-    coord_max_as_planned = np.max(coord_min_max_as_planned, axis=0)
-
-
-    # normalization xyz as features
-    if num_features == 3:
-        data_all = np.zeros((num_pts, 6))
-        if coord_max_as_built[0] > coord_max_as_planned[0]:
-            data_all[:, 3] = points[:, 0] / coord_max_as_built[0]
-        else:
-            data_all[:, 3] = points[:, 0] / coord_max_as_planned[0]
-        if coord_max_as_built[1] > coord_max_as_planned[1]:
-            data_all[:, 4] = points[:, 1] / coord_max_as_built[1]
-        else:
-            data_all[:, 4] = points[:, 1] / coord_max_as_planned[1]
-        if coord_max_as_built[2] > coord_max_as_planned[2]:
-            data_all[:, 5] = points[:, 2] / coord_max_as_built[2]
-        else:
-            data_all[:, 5] = points[:, 2] / coord_max_as_planned[2]
-    elif num_features == 6:
-        data_all = np.zeros((num_pts, 9))
-        if coord_max_as_built[0] > coord_max_as_planned[0]:
-            data_all[:, 6] = points[:, 0] / coord_max_as_built[0]
-        else:
-            data_all[:, 6] = points[:, 0] / coord_max_as_planned[0]
-        if coord_max_as_built[1] > coord_max_as_planned[1]:
-            data_all[:, 7] = points[:, 1] / coord_max_as_built[1]
-        else:
-            data_all[:, 7] = points[:, 1] / coord_max_as_planned[1]
-        if coord_max_as_built[2] > coord_max_as_planned[2]:
-            data_all[:, 8] = points[:, 2] / coord_max_as_built[2]
-        else:
-            data_all[:, 8] = points[:, 2] / coord_max_as_planned[2]
-        data_all[:, 3:6] = normals
-
-    data_all[:, 0:3] = points
-    data = data_all
-
-    num_features = data.shape[1]
-
-    return data, num_features
-
-
-def generate_color(num_classes):
-    """Erzeugt eine zufällige Farbe im RGB-Format als Tupel."""
-    dict_color = {}
-    for klasse in range(num_classes):
-        if klasse == 0:
-            dict_color[klasse] = [1,0,0]
-        elif klasse ==1:
-            dict_color[klasse] = [0, 1, 0]
-        elif klasse ==2:
-            dict_color[klasse] = [0, 0, 1]
-        elif klasse ==3:
-            dict_color[klasse] = [1, 0, 1]
-        elif klasse ==4:
-            dict_color[klasse] = [1, 1, 0]
-        elif klasse ==5:
-            dict_color[klasse] = [0, 1, 1]
-        elif klasse ==6:
-            dict_color[klasse] = [0.5, 0.5, 0.5]
-        else:
-            dict_color[klasse] = np.random.rand(1, 3)
-
-
-    return dict_color
-
-
-def segment_as_built_ai_pointnet2(dir_file_trained_model_checkpoint, pcd_model, pcd_scan, num_classes):
-    '''MODEL LOADING'''
-
-    data, num_features = pcd_to_datastructure_4_pointnet2(pcd_scan, pcd_model)
-    # get number of features
-
-    NUM_CLASSES = num_classes
-    NUM_FEATURES = num_features
-
-    print("CLASSES: ", NUM_CLASSES)
-    print("FEATS: ", NUM_FEATURES)
-
-    # Input from GUI
-
-    MODEL                               = pointnet2_sem_seg
-    #MODEL                               = importlib.import_module(model_name)
-    classifier                          = MODEL.get_model(NUM_CLASSES, NUM_FEATURES).cuda()
-    checkpoint                          = torch.load(dir_file_trained_model_checkpoint)
-    classifier.load_state_dict(checkpoint['model_state_dict'])
-    classifier                          = classifier.eval()
-
-    '''AS BUILT SCAN LOADING'''
-    as_built_dataset = data
-
-    all_pred_label = []
-    all_data = []
-    all_vis_color_point_wise = []
-    # as_built_dataset -> Nx4096x6
-    print(as_built_dataset.shape)
-    first_write = True
-    BATCH_SIZE = 1
-    SCANDATASET = AsBuiltDataset(data = as_built_dataset,  num_point=4096, batch_pts = 4096, num_features = NUM_FEATURES)
-    ScanDataLoader = torch.utils.data.DataLoader(SCANDATASET, batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
-    for i, (points) in tqdm(enumerate(ScanDataLoader), total=len(ScanDataLoader), smoothing=0.9):
-        batch_data = points
-        points = points.data.numpy()
-        points = torch.Tensor(points)
-        points = points.float().cuda()
-        # print("Second Shape EVAL: ", points.shape)  # (batch_size,4096,9)
-        points = points.transpose(2, 1)
-        # print("After transpose Shape: ", points.shape)  # (batch_size,9,4096)
-
-        seg_pred, trans_feat = classifier(points)
-        pred_val = seg_pred.contiguous().cpu().data.numpy()
-        seg_pred = seg_pred.contiguous().view(-1, NUM_CLASSES)
-
-
-        pred_val = np.argmax(pred_val, 2)
-        print("pred val argmax: ",
-              pred_val)  # [[ 2  2  2 ...  2  2  2] [ 1 12  2 ...  1  0 12] [ 2  1  2 ...  0  2  2]...[ 0  0  1 ...  2  2  1] [ 1  2  2 ...  2  2  2] [ 3  3  1 ...  3  3 12]]
-        print("pred val argmax EVAL Shape: ", pred_val.shape)  # batch_sizex4096
-
-        if first_write == True:
-            all_pred_label_point_wise = np.concatenate(pred_val)  # batch_sizex4096
-            all_data_point_wise = np.concatenate(np.array(batch_data))  # batch_size*4096x9
-            first_write = False
-        else:
-            all_pred_label_point_wise = np.concatenate((all_pred_label_point_wise, np.concatenate(pred_val)),
-                                                       axis=0)  # all_batchesx4096
-            all_data_point_wise = np.concatenate((all_data_point_wise, np.concatenate(np.array(batch_data))),
-                                                 axis=0)  # all_batchesx4096x6
-
-    first_write = True
-    print("DATA SHAPE: ", all_data_point_wise.shape)
-
-    print("PRED LABEL SHAPE: ", all_pred_label_point_wise.shape)
-
-    dict_color = generate_color(NUM_CLASSES)
-
-    print("GET COLORS FROM PREDS")
-    for seg_pred_label in all_pred_label_point_wise:  # all_batchesx4096
-        all_vis_color_point_wise.append(dict_color[seg_pred_label])
-
-
-    # Save data into ply file
-    pcd_pred = o3d.geometry.PointCloud()
-    print("POINT SHAPE: ", all_data_point_wise[:, :3].shape)
-    print(all_data_point_wise[:10])
-    pcd_pred.points = o3d.utility.Vector3dVector(all_data_point_wise[:, :3])
-    print("Normals SHAPE: ", all_data_point_wise[:, 3:6].shape)
-    pcd_pred.normals= o3d.utility.Vector3dVector(all_data_point_wise[:, 3:6])
-    print("color SHAPE: ",np.array(all_vis_color_point_wise).shape)
-    print(all_vis_color_point_wise)
-    pcd_pred.colors = o3d.utility.Vector3dVector(np.array(all_vis_color_point_wise))
-    print(np.array(pcd_pred.colors))
-    as_built_segmented = pcd_pred
-    return as_built_segmented
-
-
-
-
-
 
 
 
@@ -1172,16 +828,13 @@ def save_ply_file(pcd):
                                              filetypes=[("PLY files", "*.ply")],
                                              title="Save PLY file")
 
-def compare(num_classes, selected_class, use_ai):
+def compare():
     global assembly_parts_folder, part_id, pcd_part, pcd_as_built_on_surface, pcd_input_down, pcd_model
     if len(assembly_parts_folder) > 0:
         part_files = os.listdir(assembly_parts_folder)
         part_files = [f for f in part_files if f.lower().endswith(".ply")]
         if part_files[part_id].endswith(".ply"):
-            if use_ai == 1:
-                pcd_as_built_on_surface = process_code(pcd_input, pcd_part, num_classes = num_classes, selected_class = selected_class, use_ai=True)
-            else:
-                pcd_as_built_on_surface = process_code(pcd_input, pcd_part)
+            pcd_as_built_on_surface = process_code(pcd_input, pcd_part)
 
             viewer_3_update = update_viewer_3(pcd_part)
             viewer_4_update = update_viewer_4(pcd_part, pcd_as_built_on_surface)
@@ -1209,6 +862,8 @@ def load_part():
 def load_next_part():
     global assembly_parts_folder, part_id, pcd_part, part_file_name
 
+    print("Part id: ", part_id +1)
+
     if len(assembly_parts_folder) > 0:
         part_files = os.listdir(assembly_parts_folder)
         part_files = [f for f in part_files if f.lower().endswith(".ply")]
@@ -1230,6 +885,7 @@ def load_previous_part():
         part_files = [f for f in part_files if f.lower().endswith(".ply")]
 
         if part_id > 0 and part_files[part_id-1].endswith(".ply"):
+            print("Part id: ", part_id - 1)
             current_file = os.path.join(assembly_parts_folder, part_files[part_id-1])
             part_file_name = part_files[part_id-1]
             pcd_part = read_pcd_in_any_format(current_file)
@@ -1307,18 +963,6 @@ def process_code(pcd_input, pcd_part, num_classes = 2, selected_class = 0, use_a
     use_refinement = True
     k_nearest_neighbors = 1
 
-    if use_ai == True:
-        dict_color = generate_color(num_classes)
-        selected_color = dict_color[selected_class]
-        colors = np.array(as_built_segmented.colors)
-        # Find indices where the color matches
-        indices = np.where((colors == selected_color).all(axis=1))[0]
-
-        as_built_filtered = as_built_segmented.select_by_index(indices)
-        pcd_scan = as_built_filtered
-
-
-
     pcd_element_current = pcd_part
     bb_as_planned_scaled = expand_bounding_box(copy.deepcopy(pcd_element_current), expansion_fraction)
     pcd_as_built_in_box, idxs_point_in_box = check_points_in_BoundingBox(pcd_scan, bb_as_planned_scaled)
@@ -1333,18 +977,13 @@ def process_code(pcd_input, pcd_part, num_classes = 2, selected_class = 0, use_a
 
     return pcd_as_built_on_surface
 
-def use_ai_on_scan(dir_file_trained_model_checkpoint=None, num_classes = 2):
-    global pcd_input, pcd_input_down, pcd_model, as_built_segmented
-    as_built_segmented = segment_as_built_ai_pointnet2(dir_file_trained_model_checkpoint, pcd_model, pcd_input, num_classes)
-
-    update_viewer_1_ai(as_built_segmented)
-
 def get_folder_dir(file_in_path):
     global assembly_parts_folder
 
     assembly_parts_folder = file_in_path
     print(file_in_path)
     print("Absoluter Pfad:", assembly_parts_folder)
+    print("Amount Parts:", os.listdir(assembly_parts_folder))
 
 
 
@@ -1387,14 +1026,6 @@ def build_interface():
                 load_button = gr.Button("Laden", interactive=True)
                 print("Assembly Folder: ", assembly_parts_folder)
 
-            with gr.Row():
-                point_cloud_file_model = gr.File(label="Punktwolke Gesamtmodell hochladen (.ply, .txt, .asc, .obj)")
-
-                dir_file_trained_model_checkpoint = gr.File(label="Checkpoint Datei PointNet++ Modell hochladen (best_model.pth)")
-                num_classes = gr.Number(label= "# Classes")
-                use_ai = gr.Number(label= "use ai: 0: False, 1: True")
-                ai_button = gr.Button("Use AI", interactive=True)
-
 
         with gr.Row():
             with gr.Column(scale=1, elem_id="viewer1-container"):
@@ -1411,7 +1042,6 @@ def build_interface():
             with gr.Row():
                 back_button = gr.Button("Zurück", interactive=True)
                 forward_button = gr.Button("Vor", interactive=True)
-        selected_class = gr.Number(label="Selected Classes")
         compare_button = gr.Button("Vergleichen", interactive=True)
         with gr.Row():
             with gr.Column(scale=1, elem_id="viewer3-container"):
@@ -1434,14 +1064,12 @@ def build_interface():
         # UPDATEs
         # Punktwolke für Viewer 1 laden
         point_cloud_file.upload(load_point_cloud, inputs=point_cloud_file, outputs=viewer_1)
-        point_cloud_file_model.upload(load_pcd_model, inputs = point_cloud_file_model)
 
         assembly_parts_folder_input.change(get_folder_dir, inputs = assembly_parts_folder_input)
 
         #show_button1.click(show_pcd_in_o3d_viewer1, inputs= pcd_input)
-        compare_button.click(compare, inputs = [num_classes, selected_class, use_ai], outputs=[viewer_3, viewer_4, viewer_5, response_text])
+        compare_button.click(compare, outputs=[viewer_3, viewer_4, viewer_5, response_text])
         load_button.click(load_part, outputs=[viewer_2,part_label, part_in_scan_label,post_fix])
-        ai_button.click(use_ai_on_scan, inputs = [dir_file_trained_model_checkpoint, num_classes], outputs=viewer_1)
         back_button.click(load_previous_part, outputs=[viewer_2,part_label,part_in_scan_label, post_fix])
         forward_button.click(load_next_part, outputs=[viewer_2,part_label,part_in_scan_label, post_fix])
         download_btn.click(fn=export_pointcloud_for_download, outputs=download_file)
