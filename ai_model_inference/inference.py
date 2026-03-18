@@ -330,8 +330,42 @@ def _normalize_state_dict_keys(state_dict: Dict[str, torch.Tensor], model_keys) 
         normalized = {k if k.startswith("m.") else f"m.{k}": v for k, v in normalized.items()}
     return normalized
 
-
 def load_inference_model(checkpoint_path: str, device: str = "cpu") -> torch.nn.Module:
+    ckpt = torch.load(checkpoint_path, map_location=device)
+    if isinstance(ckpt, dict):
+        state_dict = ckpt.get("model_state_dict") or ckpt.get("state_dict") or ckpt
+    else:
+        state_dict = ckpt
+
+    out_dim = 2
+    for k, v in state_dict.items():
+        if k.endswith("head.4.weight") and hasattr(v, "shape") and len(v.shape) == 2:
+            out_dim = int(v.shape[0])
+            break
+
+    base_model = MLPFlex(
+        p=0.5,
+        out_dim=out_dim,
+        use_main=True,
+        use_esf_norm=False,
+        use_grid=True,
+    )
+    model = ChannelMaskWrapper(base_model, mode=FeatMode.MAIN_GRID, d_esf_norm=44, d_grid=27, d_main=704).to(device)
+
+    norm_sd = _normalize_state_dict_keys(state_dict, model.state_dict().keys())
+    missing, unexpected = model.load_state_dict(norm_sd, strict=False)
+    print("[LOAD] missing:", missing)
+    print("[LOAD] unexpected:", unexpected)
+
+    if len(missing) > 0 or len(unexpected) > 0:
+        raise RuntimeError(
+            f"Checkpoint/Architektur mismatch | missing={len(missing)} unexpected={len(unexpected)}"
+        )
+
+    model.eval()
+    return model
+
+def load_inference_model_all_feats(checkpoint_path: str, device: str = "cpu") -> torch.nn.Module:
     ckpt = torch.load(checkpoint_path, map_location=device)
     if isinstance(ckpt, dict):
         state_dict = ckpt.get("model_state_dict") or ckpt.get("state_dict") or ckpt
@@ -516,9 +550,15 @@ def main() -> None:
 
     # All Features
     #pred = run_inference(model, feats["x704"], feats["xext"], device=device, t_star=0.96)
-
+    print(pred)
     print(json.dumps(pred, indent=2))
-
+    if pred["predicted_class"] == 0:
+        if np.array(source.points).shape[0] < 1000:
+            print("Object Verification: Scan has to less points")
+        else:
+            print("Object Verification: Scan is another Object")
+    else:
+        print("Object Verification: Scan is Reference Object")
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,12 @@
+{
+  "epoch": 38,
+  "val_macro_f1_t": 0.9519054631573569,
+  "val_class1_f1_t": 0.9082537427316021,
+  "val_class1_recall_t": 0.88096058390435,
+  "val_class1_precision_t": 0.9372921163741023,
+  "val_t_star": 0.9553535353535354,
+  "val_fpr0_t": 0.002946974868729145,
+  "objective": "f1_class1",
+  "selection_rule": "best_class1_f1_under_fpr0_constraint",
+  "model_save_path": "C:\\Users\\Lukas\\Desktop\\ki_luca\\KI_Training_3_channels\\trained_model\\obj_verf_2cl_cnn_main_grid_big_fold_5\\obj_verf_2cl_cnn_main_grid_big_best_model.pth"
+}
