@@ -272,7 +272,17 @@ def launch(prediction_file: Optional[Path], server_port: int = 7860) -> None:
             outputs=[dd_project, dd_scan, dd_row, df_state, current_file, status],
         ).then(show_row, inputs=[df_state, dd_row], outputs=[v1, v2, v3, v4, v5, v6, meta, gt])
 
-    app.launch(server_name="0.0.0.0", server_port=server_port)
+    try:
+        app.launch(server_name="0.0.0.0", server_port=server_port)
+    except OSError as exc:
+        if "Cannot find empty port" in str(exc):
+            print(
+                f"[validation_interface] Port {server_port} ist belegt. "
+                "Fallback auf automatischen freien Port."
+            )
+            app.launch(server_name="0.0.0.0", server_port=None)
+        else:
+            raise
 
 
 def _guess_default_prediction_file(raise_if_missing: bool = True) -> Optional[Path]:

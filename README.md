@@ -29,6 +29,12 @@ Falls keine Datei gefunden wird, startet die UI trotzdem und oben kann eine Pred
 python artefact_02_validation/validation_interface.py
 ```
 
+Falls Port `7860` bereits belegt ist, versucht das Interface automatisch einen freien Port.
+Alternativ kann ein fester Port gesetzt werden:
+```bash
+python artefact_02_validation/validation_interface.py --port 7861
+```
+
 Im Interface gibt es oben den Bereich **„Prediction-Datei hochladen (.xlsx/.json)”**.  
 Nach dem Laden erkennt das Tool Projekt/Scan/Zeilen automatisch aus der Datei.
 
