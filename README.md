@@ -54,3 +54,20 @@ Outputs (im jeweiligen `metrics`-Unterordner):
 - Confusion-Matrix PNGs
 - `metrics_summary.xlsx` und `metrics_summary.json`
 - Metadaten-Exports pro Scope
+
+### 4) Zusätzliche Registrierungsausgabe: PPF-Ergebnis vor ICP als `.ply`
+Wenn du bereits eine PPF-Transformation hast, kannst du die Punktwolke **nach PPF und vor ICP** als `.ply` speichern:
+
+```bash
+python artefact_02_validation/register_after_ppf.py \
+  --source <source_scan.ply> \
+  --target <target_model.ply> \
+  --ppf-transform <ppf_transform.json> \
+  --out-dir artefact_02_validation/registration_outputs
+```
+
+Das Skript:
+- prüft zusätzlich Symmetrie-Kandidaten (`+180°` um Y und Z) als Startvarianten,
+- wählt den besten Start auf Basis eines Distanz-Scores,
+- speichert `source_after_ppf_before_icp.ply`,
+- führt danach ICP aus und speichert `source_after_icp.ply`.
