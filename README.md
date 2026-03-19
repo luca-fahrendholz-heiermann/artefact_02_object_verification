@@ -22,11 +22,15 @@ Optional wichtige Parameter:
 
 #### Direkt aus IDE (Run / Debug)
 `validation_interface.py` kann jetzt **ohne Argumente** gestartet werden.  
-Dann wird automatisch die **neueste** Predictions-Datei aus `artefact_02_validation/results` verwendet.
+Dann wird automatisch die **neueste** Predictions-Datei aus `artefact_02_validation/results` verwendet (falls vorhanden).  
+Falls keine Datei gefunden wird, startet die UI trotzdem und oben kann eine Predictions-Datei per Upload geladen werden.
 
 ```bash
 python artefact_02_validation/validation_interface.py
 ```
+
+Im Interface gibt es oben den Bereich **„Prediction-Datei hochladen (.xlsx/.json)”**.  
+Nach dem Laden erkennt das Tool Projekt/Scan/Zeilen automatisch aus der Datei.
 
 #### Optional explizite Datei angeben
 ```bash

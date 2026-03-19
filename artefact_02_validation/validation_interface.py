@@ -1,5 +1,7 @@
 import argparse
 import json
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -16,6 +18,21 @@ def _load_df(prediction_file: Path) -> pd.DataFrame:
     if prediction_file.suffix.lower() in {".xlsx", ".xls"}:
         return pd.read_excel(prediction_file)
     return pd.read_json(prediction_file)
+
+def _empty_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "project",
+            "source_file",
+            "comparison_scope",
+            "reference_file",
+            "extracted_file",
+            "predicted_class",
+            "probability_class_1",
+            "threshold_used",
+            "ground_truth",
+        ]
+    )
 
 
 def _safe_points(path_str: str) -> np.ndarray:
@@ -104,26 +121,35 @@ def _build_viewers(row: pd.Series) -> Tuple[str, str, str, str, str, str, str]:
     return viewer1, viewer2, viewer3, viewer4, viewer5, viewer6, meta
 
 
-def launch(prediction_file: Path, server_port: int = 7860) -> None:
-    df = _load_df(prediction_file)
-    if "ground_truth" not in df.columns:
-        df["ground_truth"] = np.nan
+def launch(prediction_file: Optional[Path], server_port: int = 7860) -> None:
+    if prediction_file and prediction_file.exists():
+        df_initial = _load_df(prediction_file)
+        active_file_initial = str(prediction_file)
+    else:
+        df_initial = _empty_df()
+        active_file_initial = ""
 
-    projects = sorted(df["project"].dropna().unique().tolist())
+    if "ground_truth" not in df_initial.columns:
+        df_initial["ground_truth"] = np.nan
 
-    def scans_for_project(project: str):
-        rows = df[df["project"] == project]
+    def _projects(df: pd.DataFrame) -> List[str]:
+        if "project" not in df.columns:
+            return []
+        return sorted(df["project"].dropna().astype(str).unique().tolist())
+
+    def scans_for_project(df: pd.DataFrame, project: str):
+        rows = df[df["project"].astype(str) == str(project)] if "project" in df.columns else df.iloc[0:0]
         scans = sorted(rows["source_file"].dropna().unique().tolist())
         return gr.Dropdown(choices=scans, value=scans[0] if scans else None)
 
-    def rows_for_project_scan(project: str, scan: str):
-        rows = df[(df["project"] == project) & (df["source_file"] == scan)]
+    def rows_for_project_scan(df: pd.DataFrame, project: str, scan: str):
+        rows = df[(df["project"].astype(str) == str(project)) & (df["source_file"].astype(str) == str(scan))]
         idxs = rows.index.tolist()
         labels = [f"idx={idx} | {rows.loc[idx, 'comparison_scope']} | {Path(str(rows.loc[idx, 'reference_file'])).name}" for idx in idxs]
         default = idxs[0] if idxs else None
         return gr.Dropdown(choices=[(labels[i], idxs[i]) for i in range(len(idxs))], value=default)
 
-    def show_row(idx: int):
+    def show_row(df: pd.DataFrame, idx: int):
         if idx is None:
             empty = "<div>Keine Daten</div>"
             return empty, empty, empty, empty, empty, empty, "Keine Zeile gewählt", None
@@ -132,20 +158,86 @@ def launch(prediction_file: Path, server_port: int = 7860) -> None:
         gt = None if pd.isna(row.get("ground_truth")) else int(row.get("ground_truth"))
         return v1, v2, v3, v4, v5, v6, meta, gt
 
-    def save_gt(idx: int, gt: int):
+    def save_gt(df: pd.DataFrame, active_file: str, idx: int, gt: int):
         if idx is None or gt is None:
-            return "Bitte Zeile und Ground Truth wählen."
+            return "Bitte Zeile und Ground Truth wählen.", df
+        if not active_file:
+            return "Bitte zuerst eine Prediction-Datei laden (Upload).", df
         df.loc[idx, "ground_truth"] = int(gt)
-        if prediction_file.suffix.lower() in {".xlsx", ".xls"}:
-            df.to_excel(prediction_file, index=False)
+        target = Path(active_file)
+        if target.suffix.lower() in {".xlsx", ".xls"}:
+            df.to_excel(target, index=False)
         else:
-            df.to_json(prediction_file, orient="records", indent=2, force_ascii=False)
-        return f"Gespeichert: idx={idx}, ground_truth={gt}"
+            df.to_json(target, orient="records", indent=2, force_ascii=False)
+        return f"Gespeichert: idx={idx}, ground_truth={gt}", df
+
+    def load_prediction_file(uploaded_file, active_file: str):
+        loaded_path: Optional[Path] = None
+        if uploaded_file is not None:
+            src = Path(uploaded_file.name if hasattr(uploaded_file, "name") else str(uploaded_file))
+            if not src.exists():
+                return (
+                    gr.Dropdown(choices=[], value=None),
+                    gr.Dropdown(choices=[], value=None),
+                    gr.Dropdown(choices=[], value=None),
+                    _empty_df(),
+                    active_file,
+                    f"Upload-Datei nicht gefunden: {src}",
+                )
+            work_dir = Path(tempfile.gettempdir()) / "artefact_02_validation_uploads"
+            work_dir.mkdir(parents=True, exist_ok=True)
+            dst = work_dir / src.name
+            shutil.copy2(src, dst)
+            loaded_path = dst
+        elif active_file:
+            loaded_path = Path(active_file)
+        else:
+            guessed = _guess_default_prediction_file(raise_if_missing=False)
+            loaded_path = guessed
+
+        if loaded_path is None or not loaded_path.exists():
+            return (
+                gr.Dropdown(choices=[], value=None),
+                gr.Dropdown(choices=[], value=None),
+                gr.Dropdown(choices=[], value=None),
+                _empty_df(),
+                "",
+                "Keine Prediction-Datei geladen. Bitte oben eine .xlsx/.json Datei hochladen.",
+            )
+
+        df_loaded = _load_df(loaded_path)
+        if "ground_truth" not in df_loaded.columns:
+            df_loaded["ground_truth"] = np.nan
+        projects = _projects(df_loaded)
+        project_value = projects[0] if projects else None
+        rows = df_loaded[df_loaded["project"].astype(str) == str(project_value)] if project_value else df_loaded.iloc[0:0]
+        scans = sorted(rows["source_file"].dropna().astype(str).unique().tolist())
+        scan_value = scans[0] if scans else None
+        row_subset = rows[rows["source_file"].astype(str) == str(scan_value)] if scan_value else rows.iloc[0:0]
+        idxs = row_subset.index.tolist()
+        labels = [f"idx={idx} | {row_subset.loc[idx, 'comparison_scope']} | {Path(str(row_subset.loc[idx, 'reference_file'])).name}" for idx in idxs]
+        row_value = idxs[0] if idxs else None
+
+        return (
+            gr.Dropdown(choices=projects, value=project_value),
+            gr.Dropdown(choices=scans, value=scan_value),
+            gr.Dropdown(choices=[(labels[i], idxs[i]) for i in range(len(idxs))], value=row_value),
+            df_loaded,
+            str(loaded_path),
+            f"Datei geladen: {loaded_path}",
+        )
 
     with gr.Blocks(title="Validation Labeling Interface") as app:
         gr.Markdown("## Object Verification Labeling Interface")
         with gr.Row():
-            dd_project = gr.Dropdown(choices=projects, value=projects[0] if projects else None, label="Projekt")
+            upload = gr.File(label="Prediction-Datei hochladen (.xlsx/.json)", file_types=[".xlsx", ".json"])
+            load_btn = gr.Button("Datei laden")
+        status = gr.Textbox(label="Status", value="Bitte Prediction-Datei laden.")
+        current_file = gr.Textbox(label="Aktive Prediction-Datei", value=active_file_initial)
+        df_state = gr.State(df_initial)
+
+        with gr.Row():
+            dd_project = gr.Dropdown(choices=_projects(df_initial), value=_projects(df_initial)[0] if _projects(df_initial) else None, label="Projekt")
             dd_scan = gr.Dropdown(label="Source Scan")
             dd_row = gr.Dropdown(label="Vergleichszeile")
 
@@ -162,26 +254,35 @@ def launch(prediction_file: Path, server_port: int = 7860) -> None:
         meta = gr.Markdown()
         gt = gr.Radio(choices=[0, 1], label="Ground Truth (0/1)")
         btn = gr.Button("Ground Truth speichern")
-        status = gr.Textbox(label="Status")
 
-        dd_project.change(scans_for_project, inputs=[dd_project], outputs=[dd_scan])
-        dd_scan.change(rows_for_project_scan, inputs=[dd_project, dd_scan], outputs=[dd_row])
-        dd_row.change(show_row, inputs=[dd_row], outputs=[v1, v2, v3, v4, v5, v6, meta, gt])
-        btn.click(save_gt, inputs=[dd_row, gt], outputs=[status])
+        load_btn.click(
+            load_prediction_file,
+            inputs=[upload, current_file],
+            outputs=[dd_project, dd_scan, dd_row, df_state, current_file, status],
+        ).then(show_row, inputs=[df_state, dd_row], outputs=[v1, v2, v3, v4, v5, v6, meta, gt])
 
-        app.load(scans_for_project, inputs=[dd_project], outputs=[dd_scan]).then(
-            rows_for_project_scan, inputs=[dd_project, dd_scan], outputs=[dd_row]
-        ).then(show_row, inputs=[dd_row], outputs=[v1, v2, v3, v4, v5, v6, meta, gt])
+        dd_project.change(scans_for_project, inputs=[df_state, dd_project], outputs=[dd_scan])
+        dd_scan.change(rows_for_project_scan, inputs=[df_state, dd_project, dd_scan], outputs=[dd_row])
+        dd_row.change(show_row, inputs=[df_state, dd_row], outputs=[v1, v2, v3, v4, v5, v6, meta, gt])
+        btn.click(save_gt, inputs=[df_state, current_file, dd_row, gt], outputs=[status, df_state])
+
+        app.load(
+            load_prediction_file,
+            inputs=[gr.State(None), current_file],
+            outputs=[dd_project, dd_scan, dd_row, df_state, current_file, status],
+        ).then(show_row, inputs=[df_state, dd_row], outputs=[v1, v2, v3, v4, v5, v6, meta, gt])
 
     app.launch(server_name="0.0.0.0", server_port=server_port)
 
 
-def _guess_default_prediction_file() -> Path:
+def _guess_default_prediction_file(raise_if_missing: bool = True) -> Optional[Path]:
     if not DEFAULT_RESULTS_DIR.exists():
-        raise FileNotFoundError(
-            f"No prediction file found. Expected results under: {DEFAULT_RESULTS_DIR}. "
-            "Run run_validation.py first or pass --prediction-file."
-        )
+        if raise_if_missing:
+            raise FileNotFoundError(
+                f"No prediction file found. Expected results under: {DEFAULT_RESULTS_DIR}. "
+                "Run run_validation.py first or pass --prediction-file."
+            )
+        return None
 
     candidates = [
         p
@@ -192,10 +293,12 @@ def _guess_default_prediction_file() -> Path:
         and "metrics" not in str(p).lower()
     ]
     if not candidates:
-        raise FileNotFoundError(
-            f"No prediction file found in {DEFAULT_RESULTS_DIR}. "
-            "Run run_validation.py first or pass --prediction-file."
-        )
+        if raise_if_missing:
+            raise FileNotFoundError(
+                f"No prediction file found in {DEFAULT_RESULTS_DIR}. "
+                "Run run_validation.py first or pass --prediction-file."
+            )
+        return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
@@ -212,6 +315,9 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    prediction_file = Path(args.prediction_file) if args.prediction_file else _guess_default_prediction_file()
-    print(f"[validation_interface] Using prediction file: {prediction_file}")
+    prediction_file = Path(args.prediction_file) if args.prediction_file else _guess_default_prediction_file(raise_if_missing=False)
+    if prediction_file:
+        print(f"[validation_interface] Using prediction file: {prediction_file}")
+    else:
+        print("[validation_interface] No default prediction file found. Please upload one in the UI.")
     launch(prediction_file, server_port=args.port)
