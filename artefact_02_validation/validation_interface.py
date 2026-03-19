@@ -9,6 +9,7 @@ import open3d as o3d
 import pandas as pd
 
 MAX_VIEWER_POINTS = 12000
+DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 
 def _load_df(prediction_file: Path) -> pd.DataFrame:
@@ -175,13 +176,42 @@ def launch(prediction_file: Path, server_port: int = 7860) -> None:
     app.launch(server_name="0.0.0.0", server_port=server_port)
 
 
+def _guess_default_prediction_file() -> Path:
+    if not DEFAULT_RESULTS_DIR.exists():
+        raise FileNotFoundError(
+            f"No prediction file found. Expected results under: {DEFAULT_RESULTS_DIR}. "
+            "Run run_validation.py first or pass --prediction-file."
+        )
+
+    candidates = [
+        p
+        for p in DEFAULT_RESULTS_DIR.rglob("*")
+        if p.is_file()
+        and p.suffix.lower() in {".xlsx", ".json"}
+        and "predictions" in p.name.lower()
+        and "metrics" not in str(p).lower()
+    ]
+    if not candidates:
+        raise FileNotFoundError(
+            f"No prediction file found in {DEFAULT_RESULTS_DIR}. "
+            "Run run_validation.py first or pass --prediction-file."
+        )
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Launch gradio interface for ground-truth labeling.")
-    parser.add_argument("--prediction-file", required=True)
+    parser.add_argument(
+        "--prediction-file",
+        default=None,
+        help="Path to prediction file (.xlsx/.json). If omitted, the newest predictions file in artefact_02_validation/results is used.",
+    )
     parser.add_argument("--port", type=int, default=7860)
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    launch(Path(args.prediction_file), server_port=args.port)
+    prediction_file = Path(args.prediction_file) if args.prediction_file else _guess_default_prediction_file()
+    print(f"[validation_interface] Using prediction file: {prediction_file}")
+    launch(prediction_file, server_port=args.port)
