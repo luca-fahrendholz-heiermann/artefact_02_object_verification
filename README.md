@@ -63,7 +63,9 @@ python artefact_02_validation/register_after_ppf.py \
   --source <source_scan.ply> \
   --target <target_model.ply> \
   --ppf-transform <ppf_transform.json> \
-  --out-dir artefact_02_validation/registration_outputs
+  --out-dir artefact_02_validation/registration_outputs \
+  --t-noise <T_noise.txt> \
+  --excel-out artefact_02_validation/registration_outputs/landmark_validation.xlsx
 ```
 
 Das Skript:
@@ -80,3 +82,14 @@ Das Skript:
 Debug-Tipps:
 - Mit `--save-all-candidates` werden alle getesteten Startlagen als `.ply` gespeichert.
 - Wenn globale Fehlerwerte unrealistisch hoch sind (z. B. sehr große `Translation Error` trotz guter Überlagerung), ist häufig die Transformationsrichtung oder Einheit (mm/m) inkonsistent.
+
+Erweiterte Landmarken-Auswertung (`--t-noise` gesetzt):
+- Landmarken werden **einmal** im Initialzustand per festen Indizes gewählt (`min/max X,Y,Z`) und unverändert wiederverwendet.
+- Zusätzlich zum Matrixansatz werden effektive Bewegungen aus Landmarken berechnet:
+  - `x_trans`, `y_trans`, `z_trans`
+  - `x_rot` (aus YZ), `y_rot` (aus XZ), `z_rot` (aus XY)
+- Excel-Ausgabe enthält die Blätter:
+  - `Uebersicht`
+  - `Matrizen`
+  - `Landmarken_Details`
+  - `Ansatz`
