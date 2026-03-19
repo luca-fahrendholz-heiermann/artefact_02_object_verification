@@ -68,6 +68,15 @@ python artefact_02_validation/register_after_ppf.py \
 
 Das Skript:
 - prüft zusätzlich Symmetrie-Kandidaten (`+180°` um Y und Z) als Startvarianten,
+- prüft standardmäßig auch die inverse PPF-Transformation (hilfreich bei Richtung/Koordinatensystem-Problemen),
 - wählt den besten Start auf Basis eines Distanz-Scores,
 - speichert `source_after_ppf_before_icp.ply`,
 - führt danach ICP aus und speichert `source_after_icp.ply`.
+- schätzt fehlende Normalen automatisch, damit Point-to-Plane ICP nicht mit `requires target pointcloud to have normals` fehlschlägt.
+- schreibt zusätzlich Transformationsdateien:
+  - `T_est_world.txt` (Transformation im Weltkoordinatensystem)
+  - `T_est_centered.txt` (Transformation im zentrierten Frame, oft stabiler für Fehlervergleich mit künstlicher Initial-Transformation)
+
+Debug-Tipps:
+- Mit `--save-all-candidates` werden alle getesteten Startlagen als `.ply` gespeichert.
+- Wenn globale Fehlerwerte unrealistisch hoch sind (z. B. sehr große `Translation Error` trotz guter Überlagerung), ist häufig die Transformationsrichtung oder Einheit (mm/m) inkonsistent.
